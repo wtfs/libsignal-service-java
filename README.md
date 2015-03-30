@@ -46,11 +46,10 @@ TextSecureMessageSender messageSender = new TextSecureMessageSender(URL, TRUST_S
                                                                     localRecipientId, new MyAxolotlStore(),
                                                                     Optional.absent());
 
-long              recipientId = getRecipientIdFor("+14159998888");
-TextSecureAddress destination = new TextSecureAddress(recipientId, "+14159998888", null);
-TextSecureMessage message     = new TextSecureMessage(System.currentTimeMillis(), "Hello, world!");
-
-messageSender.sendMessage(destination, message);
+messageSender.sendMessage(new TextSecureAddress("+14159998888"),
+                          TextSecureMessage.newBuilder()
+                                           .withBody("Hello, world!")
+                                           .build());
 `````
 
 ## Sending media messages
@@ -60,15 +59,19 @@ TextSecureMessageSender messageSender = new TextSecureMessageSender(URL, TRUST_S
                                                                     localRecipientId, new MyAxolotlStore(),
                                                                     Optional.absent());
 
-long              recipientId = getRecipientIdFor("+14159998888");
-TextSecureAddress destination = new TextSecureAddress(recipientId, "+14159998888", null);
-
 File                 myAttachment     = new File("/path/to/my.attachment");
 FileInputStream      attachmentStream = new FileInputStream(myAttachment);
-TextSecureAttachment attachment       = new TextSecureAttachmentStream(attachmentStream, "image/png", myAttachment.size());
-TextSecureMessage    message          = new TextSecureMessage(System.currentTimeMillis(), attachment, "Hello, world!");
+TextSecureAttachment attachment       = TextSecureAttachment.newStreamBuilder()
+                                                            .withStream(attachmentStream)
+                                                            .withContentType("image/png")
+                                                            .withLength(myAttachment.size())
+                                                            .build();
 
-messageSender.sendMessage(destination, message);
+messageSender.sendMessage(new TextSecureAddress("+14159998888"),
+                          TextSecureMessage.newBuilder()
+                                           .withBody("An attachment!")
+                                           .withAttachment(attachment)
+                                           .build());
 
 `````
 
@@ -83,9 +86,7 @@ try {
 
   while (listeningForMessages) {
     TextSecureEnvelope envelope = messagePipe.read(timeout, timeoutTimeUnit);
-    TextSecureCipher   cipher   = new TextSecureCipher(new MyAxolotlStore(),
-                                                       getRecipientIdFor(envelope.getSource()),
-                                                       envelope.getSourceDevice());
+    TextSecureCipher   cipher   = new TextSecureCipher(new MyAxolotlStore());
     TextSecureMessage message   = cipher.decrypt(envelope);
 
     System.out.println("Received message: " + message.getBody().get());
@@ -96,3 +97,21 @@ try {
     messagePipe.close();
 }
 `````
+
+# Legal things
+
+## Cryptography Notice
+
+This distribution includes cryptographic software. The country in which you currently reside may have restrictions on the import, possession, use, and/or re-export to another country, of encryption software.
+BEFORE using any encryption software, please check your country's laws, regulations and policies concerning the import, possession, or use, and re-export of encryption software, to see if this is permitted.
+See <http://www.wassenaar.org/> for more information.
+
+The U.S. Government Department of Commerce, Bureau of Industry and Security (BIS), has classified this software as Export Commodity Control Number (ECCN) 5D002.C.1, which includes information security software using or performing cryptographic functions with asymmetric algorithms.
+The form and manner of this distribution makes it eligible for export under the License Exception ENC Technology Software Unrestricted (TSU) exception (see the BIS Export Administration Regulations, Section 740.13) for both object code and source code.
+
+## License
+
+Copyright 2013-2015 Open Whisper Systems
+
+Licensed under the AGPLv3: https://www.gnu.org/licenses/agpl-3.0.html
+
