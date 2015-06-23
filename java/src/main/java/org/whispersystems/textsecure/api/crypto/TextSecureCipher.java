@@ -34,20 +34,27 @@ import org.whispersystems.libaxolotl.protocol.WhisperMessage;
 import org.whispersystems.libaxolotl.state.AxolotlStore;
 import org.whispersystems.textsecure.api.messages.TextSecureAttachment;
 import org.whispersystems.textsecure.api.messages.TextSecureAttachmentPointer;
+import org.whispersystems.textsecure.api.messages.TextSecureContent;
+import org.whispersystems.textsecure.api.messages.TextSecureDataMessage;
 import org.whispersystems.textsecure.api.messages.TextSecureEnvelope;
 import org.whispersystems.textsecure.api.messages.TextSecureGroup;
-import org.whispersystems.textsecure.api.messages.TextSecureMessage;
+import org.whispersystems.textsecure.api.messages.multidevice.RequestMessage;
+import org.whispersystems.textsecure.api.messages.multidevice.SentTranscriptMessage;
+import org.whispersystems.textsecure.api.messages.multidevice.TextSecureSyncMessage;
+import org.whispersystems.textsecure.api.push.TextSecureAddress;
 import org.whispersystems.textsecure.internal.push.OutgoingPushMessage;
-import org.whispersystems.textsecure.internal.push.PushMessageProtos;
 import org.whispersystems.textsecure.internal.push.PushTransportDetails;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.AttachmentPointer;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.Content;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.DataMessage;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.Envelope.Type;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.SyncMessage;
 import org.whispersystems.textsecure.internal.util.Base64;
 
 import java.util.LinkedList;
 import java.util.List;
 
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.IncomingPushMessageSignal.Type;
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.PushMessageContent;
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.PushMessageContent.GroupContext.Type.DELIVER;
+import static org.whispersystems.textsecure.internal.push.TextSecureProtos.GroupContext.Type.DELIVER;
 
 /**
  * This is used to decrypt received {@link org.whispersystems.textsecure.api.messages.TextSecureEnvelope}s.
@@ -56,13 +63,17 @@ import static org.whispersystems.textsecure.internal.push.PushMessageProtos.Push
  */
 public class TextSecureCipher {
 
-  private final AxolotlStore axolotlStore;
+  private static final String TAG = TextSecureCipher.class.getSimpleName();
 
-  public TextSecureCipher(AxolotlStore axolotlStore) {
+  private final AxolotlStore      axolotlStore;
+  private final TextSecureAddress localAddress;
+
+  public TextSecureCipher(TextSecureAddress localAddress, AxolotlStore axolotlStore) {
     this.axolotlStore = axolotlStore;
+    this.localAddress = localAddress;
   }
 
-  public OutgoingPushMessage encrypt(AxolotlAddress destination, byte[] unpaddedMessage) {
+  public OutgoingPushMessage encrypt(AxolotlAddress destination, byte[] unpaddedMessage, boolean legacy) {
     SessionCipher        sessionCipher        = new SessionCipher(axolotlStore, destination);
     PushTransportDetails transportDetails     = new PushTransportDetails(sessionCipher.getSessionVersion());
     CiphertextMessage    message              = sessionCipher.encrypt(transportDetails.getPaddedMessageBody(unpaddedMessage));
@@ -77,7 +88,8 @@ public class TextSecureCipher {
       default: throw new AssertionError("Bad type: " + message.getType());
     }
 
-    return new OutgoingPushMessage(type, destination.getDeviceId(), remoteRegistrationId, body);
+    return new OutgoingPushMessage(type, destination.getDeviceId(), remoteRegistrationId,
+                                   legacy ? body : null, legacy ? null : body);
   }
 
   /**
@@ -94,54 +106,87 @@ public class TextSecureCipher {
    * @throws LegacyMessageException
    * @throws NoSessionException
    */
-  public TextSecureMessage decrypt(TextSecureEnvelope envelope)
+  public TextSecureContent decrypt(TextSecureEnvelope envelope)
       throws InvalidVersionException, InvalidMessageException, InvalidKeyException,
              DuplicateMessageException, InvalidKeyIdException, UntrustedIdentityException,
              LegacyMessageException, NoSessionException
   {
     try {
-      AxolotlAddress sourceAddress = new AxolotlAddress(envelope.getSource(), envelope.getSourceDevice());
-      SessionCipher  sessionCipher = new SessionCipher(axolotlStore, sourceAddress);
+      TextSecureContent content = new TextSecureContent();
 
-      byte[] paddedMessage;
+      if (envelope.hasLegacyMessage()) {
+        DataMessage message = DataMessage.parseFrom(decrypt(envelope, envelope.getLegacyMessage()));
+        content = new TextSecureContent(createTextSecureMessage(envelope, message));
+      } else if (envelope.hasContent()) {
+        Content message = Content.parseFrom(decrypt(envelope, envelope.getContent()));
 
-      if (envelope.isPreKeyWhisperMessage()) {
-        paddedMessage = sessionCipher.decrypt(new PreKeyWhisperMessage(envelope.getMessage()));
-      } else if (envelope.isWhisperMessage()) {
-        paddedMessage = sessionCipher.decrypt(new WhisperMessage(envelope.getMessage()));
-      } else if (envelope.isPlaintext()) {
-        paddedMessage = envelope.getMessage();
-      } else {
-        throw new InvalidMessageException("Unknown type: " + envelope.getType());
+        if (message.hasDataMessage()) {
+          content = new TextSecureContent(createTextSecureMessage(envelope, message.getDataMessage()));
+        } else if (message.hasSyncMessage() && localAddress.getNumber().equals(envelope.getSource())) {
+          content = new TextSecureContent(createSynchronizeMessage(envelope, message.getSyncMessage()));
+        }
       }
 
-      PushTransportDetails transportDetails = new PushTransportDetails(sessionCipher.getSessionVersion());
-      PushMessageContent   content          = PushMessageContent.parseFrom(transportDetails.getStrippedPaddingMessageBody(paddedMessage));
-
-      return createTextSecureMessage(envelope, content);
+      return content;
     } catch (InvalidProtocolBufferException e) {
       throw new InvalidMessageException(e);
     }
   }
 
-  private TextSecureMessage createTextSecureMessage(TextSecureEnvelope envelope, PushMessageContent content) {
+  private byte[] decrypt(TextSecureEnvelope envelope, byte[] ciphertext)
+      throws InvalidVersionException, InvalidMessageException, InvalidKeyException,
+             DuplicateMessageException, InvalidKeyIdException, UntrustedIdentityException,
+             LegacyMessageException, NoSessionException
+  {
+    AxolotlAddress sourceAddress = new AxolotlAddress(envelope.getSource(), envelope.getSourceDevice());
+    SessionCipher  sessionCipher = new SessionCipher(axolotlStore, sourceAddress);
+
+    byte[] paddedMessage;
+
+    if (envelope.isPreKeyWhisperMessage()) {
+      paddedMessage = sessionCipher.decrypt(new PreKeyWhisperMessage(ciphertext));
+    } else if (envelope.isWhisperMessage()) {
+      paddedMessage = sessionCipher.decrypt(new WhisperMessage(ciphertext));
+    } else {
+      throw new InvalidMessageException("Unknown type: " + envelope.getType());
+    }
+
+    PushTransportDetails transportDetails = new PushTransportDetails(sessionCipher.getSessionVersion());
+    return transportDetails.getStrippedPaddingMessageBody(paddedMessage);
+  }
+
+  private TextSecureDataMessage createTextSecureMessage(TextSecureEnvelope envelope, DataMessage content) {
     TextSecureGroup            groupInfo   = createGroupInfo(envelope, content);
     List<TextSecureAttachment> attachments = new LinkedList<>();
-    boolean                    endSession  = ((content.getFlags() & PushMessageContent.Flags.END_SESSION_VALUE) != 0);
-    boolean                    secure      = envelope.isWhisperMessage() || envelope.isPreKeyWhisperMessage();
+    boolean                    endSession  = ((content.getFlags() & DataMessage.Flags.END_SESSION_VALUE) != 0);
 
-    for (PushMessageContent.AttachmentPointer pointer : content.getAttachmentsList()) {
+    for (AttachmentPointer pointer : content.getAttachmentsList()) {
       attachments.add(new TextSecureAttachmentPointer(pointer.getId(),
                                                       pointer.getContentType(),
                                                       pointer.getKey().toByteArray(),
                                                       envelope.getRelay()));
     }
 
-    return new TextSecureMessage(envelope.getTimestamp(), groupInfo, attachments,
-                                 content.getBody(), secure, endSession);
+    return new TextSecureDataMessage(envelope.getTimestamp(), groupInfo, attachments,
+                                     content.getBody(), endSession);
   }
 
-  private TextSecureGroup createGroupInfo(TextSecureEnvelope envelope, PushMessageContent content) {
+  private TextSecureSyncMessage createSynchronizeMessage(TextSecureEnvelope envelope, SyncMessage content) {
+    if (content.hasSent()) {
+      SyncMessage.Sent sentContent = content.getSent();
+      return TextSecureSyncMessage.forSentTranscript(new SentTranscriptMessage(sentContent.getDestination(),
+                                                                               sentContent.getTimestamp(),
+                                                                               createTextSecureMessage(envelope, sentContent.getMessage())));
+    }
+
+    if (content.hasRequest()) {
+      return TextSecureSyncMessage.forRequest(new RequestMessage(content.getRequest()));
+    }
+
+    return TextSecureSyncMessage.empty();
+  }
+
+  private TextSecureGroup createGroupInfo(TextSecureEnvelope envelope, DataMessage content) {
     if (!content.hasGroup()) return null;
 
     TextSecureGroup.Type type;

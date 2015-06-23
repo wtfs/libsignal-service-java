@@ -27,6 +27,7 @@ import org.whispersystems.libaxolotl.state.PreKeyRecord;
 import org.whispersystems.libaxolotl.state.SignedPreKeyRecord;
 import org.whispersystems.libaxolotl.util.guava.Optional;
 import org.whispersystems.textsecure.api.crypto.AttachmentCipherOutputStream;
+import org.whispersystems.textsecure.api.messages.multidevice.DeviceInfo;
 import org.whispersystems.textsecure.api.push.ContactTokenDetails;
 import org.whispersystems.textsecure.api.push.TextSecureAddress;
 import org.whispersystems.textsecure.api.push.SignedPreKeyEntity;
@@ -86,10 +87,12 @@ public class PushServiceSocket {
 
   private static final String PROVISIONING_CODE_PATH    = "/v1/devices/provisioning/code";
   private static final String PROVISIONING_MESSAGE_PATH = "/v1/provisioning/%s";
+  private static final String DEVICE_PATH               = "/v1/devices/%s";
 
   private static final String DIRECTORY_TOKENS_PATH     = "/v1/directory/tokens";
   private static final String DIRECTORY_VERIFY_PATH     = "/v1/directory/%s";
   private static final String MESSAGE_PATH              = "/v1/messages/%s";
+  private static final String ACKNOWLEDGE_MESSAGE_PATH  = "/v1/messages/%s/%d";
   private static final String RECEIPT_PATH              = "/v1/receipt/%s/%d";
   private static final String ATTACHMENT_PATH           = "/v1/attachments/%s";
 
@@ -123,6 +126,15 @@ public class PushServiceSocket {
   public String getNewDeviceVerificationCode() throws IOException {
     String responseText = makeRequest(PROVISIONING_CODE_PATH, "GET", null);
     return JsonUtil.fromJson(responseText, DeviceCode.class).getVerificationCode();
+  }
+
+  public List<DeviceInfo> getDevices() throws IOException {
+    String responseText = makeRequest(String.format(DEVICE_PATH, ""), "GET", null);
+    return JsonUtil.fromJson(responseText, DeviceInfoList.class).getDevices();
+  }
+
+  public void removeDevice(long deviceId) throws IOException {
+    makeRequest(String.format(DEVICE_PATH, String.valueOf(deviceId)), "DELETE", null);
   }
 
   public void sendProvisioningMessage(String destination, byte[] body) throws IOException {
@@ -160,6 +172,15 @@ public class PushServiceSocket {
     } catch (NotFoundException nfe) {
       throw new UnregisteredUserException(bundle.getDestination(), nfe);
     }
+  }
+
+  public List<TextSecureEnvelopeEntity> getMessages() throws IOException {
+    String responseText = makeRequest(String.format(MESSAGE_PATH, ""), "GET", null);
+    return JsonUtil.fromJson(responseText, TextSecureEnvelopeEntityList.class).getMessages();
+  }
+
+  public void acknowledgeMessage(String sender, long timestamp) throws IOException {
+    makeRequest(String.format(ACKNOWLEDGE_MESSAGE_PATH, sender, timestamp), "DELETE", null);
   }
 
   public void registerPreKeys(IdentityKey identityKey,
@@ -473,6 +494,13 @@ public class PushServiceSocket {
           throw new PushNetworkException(e);
         }
         throw new StaleDevicesException(JsonUtil.fromJson(response, StaleDevices.class));
+      case 411:
+        try {
+          response = Util.readFully(connection.getErrorStream());
+        } catch (IOException e) {
+          throw new PushNetworkException(e);
+        }
+        throw new DeviceLimitExceededException(JsonUtil.fromJson(response, DeviceLimit.class));
       case 417:
         throw new ExpectationFailedException();
     }

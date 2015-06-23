@@ -30,8 +30,9 @@ import org.whispersystems.textsecure.api.crypto.TextSecureCipher;
 import org.whispersystems.textsecure.api.crypto.UntrustedIdentityException;
 import org.whispersystems.textsecure.api.messages.TextSecureAttachment;
 import org.whispersystems.textsecure.api.messages.TextSecureAttachmentStream;
+import org.whispersystems.textsecure.api.messages.TextSecureDataMessage;
 import org.whispersystems.textsecure.api.messages.TextSecureGroup;
-import org.whispersystems.textsecure.api.messages.TextSecureMessage;
+import org.whispersystems.textsecure.api.messages.multidevice.TextSecureSyncMessage;
 import org.whispersystems.textsecure.api.push.TextSecureAddress;
 import org.whispersystems.textsecure.api.push.TrustStore;
 import org.whispersystems.textsecure.api.push.exceptions.EncapsulatedExceptions;
@@ -45,6 +46,11 @@ import org.whispersystems.textsecure.internal.push.PushAttachmentData;
 import org.whispersystems.textsecure.internal.push.PushServiceSocket;
 import org.whispersystems.textsecure.internal.push.SendMessageResponse;
 import org.whispersystems.textsecure.internal.push.StaleDevices;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.AttachmentPointer;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.Content;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.DataMessage;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.GroupContext;
+import org.whispersystems.textsecure.internal.push.TextSecureProtos.SyncMessage;
 import org.whispersystems.textsecure.internal.push.exceptions.MismatchedDevicesException;
 import org.whispersystems.textsecure.internal.push.exceptions.StaleDevicesException;
 import org.whispersystems.textsecure.internal.util.StaticCredentialsProvider;
@@ -53,10 +59,6 @@ import org.whispersystems.textsecure.internal.util.Util;
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
-
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.PushMessageContent;
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.PushMessageContent.AttachmentPointer;
-import static org.whispersystems.textsecure.internal.push.PushMessageProtos.PushMessageContent.GroupContext;
 
 /**
  * The main interface for sending TextSecure messages.
@@ -69,7 +71,7 @@ public class TextSecureMessageSender {
 
   private final PushServiceSocket       socket;
   private final AxolotlStore            store;
-  private final TextSecureAddress       syncAddress;
+  private final TextSecureAddress       localAddress;
   private final Optional<EventListener> eventListener;
 
   /**
@@ -90,7 +92,7 @@ public class TextSecureMessageSender {
   {
     this.socket        = new PushServiceSocket(url, trustStore, new StaticCredentialsProvider(user, password, null));
     this.store         = store;
-    this.syncAddress   = new TextSecureAddress(user);
+    this.localAddress  = new TextSecureAddress(user);
     this.eventListener = eventListener;
   }
 
@@ -113,16 +115,16 @@ public class TextSecureMessageSender {
    * @throws UntrustedIdentityException
    * @throws IOException
    */
-  public void sendMessage(TextSecureAddress recipient, TextSecureMessage message)
+  public void sendMessage(TextSecureAddress recipient, TextSecureDataMessage message)
       throws UntrustedIdentityException, IOException
   {
     byte[]              content   = createMessageContent(message);
     long                timestamp = message.getTimestamp();
-    SendMessageResponse response  = sendMessage(recipient, timestamp, content);
+    SendMessageResponse response  = sendMessage(recipient, timestamp, content, true);
 
     if (response != null && response.getNeedsSync()) {
-      byte[] syncMessage = createSyncMessageContent(content, recipient, timestamp);
-      sendMessage(syncAddress, timestamp, syncMessage);
+      byte[] syncMessage = createMultiDeviceSentTranscriptContent(content, Optional.of(recipient), timestamp);
+      sendMessage(localAddress, timestamp, syncMessage, false);
     }
 
     if (message.isEndSession()) {
@@ -142,16 +144,42 @@ public class TextSecureMessageSender {
    * @throws IOException
    * @throws EncapsulatedExceptions
    */
-  public void sendMessage(List<TextSecureAddress> recipients, TextSecureMessage message)
+  public void sendMessage(List<TextSecureAddress> recipients, TextSecureDataMessage message)
       throws IOException, EncapsulatedExceptions
   {
-    byte[] content = createMessageContent(message);
-    sendMessage(recipients, message.getTimestamp(), content);
+    byte[]              content   = createMessageContent(message);
+    long                timestamp = message.getTimestamp();
+    SendMessageResponse response  = sendMessage(recipients, timestamp, content, true);
+
+    try {
+      if (response != null && response.getNeedsSync()) {
+        byte[] syncMessage = createMultiDeviceSentTranscriptContent(content, Optional.<TextSecureAddress>absent(), timestamp);
+        sendMessage(localAddress, timestamp, syncMessage, false);
+      }
+    } catch (UntrustedIdentityException e) {
+      throw new EncapsulatedExceptions(e);
+    }
   }
 
-  private byte[] createMessageContent(TextSecureMessage message) throws IOException {
-    PushMessageContent.Builder builder  = PushMessageContent.newBuilder();
-    List<AttachmentPointer>    pointers = createAttachmentPointers(message.getAttachments());
+  public void sendMessage(TextSecureSyncMessage message)
+      throws IOException, UntrustedIdentityException
+  {
+    byte[] content;
+
+    if (message.getContacts().isPresent()) {
+      content = createMultiDeviceContactsContent(message.getContacts().get().asStream());
+    } else if (message.getGroups().isPresent()) {
+      content = createMultiDeviceGroupsContent(message.getGroups().get().asStream());
+    } else {
+      throw new IOException("Unsupported sync message!");
+    }
+
+    sendMessage(localAddress, System.currentTimeMillis(), content, false);
+  }
+
+  private byte[] createMessageContent(TextSecureDataMessage message) throws IOException {
+    DataMessage.Builder     builder  = DataMessage.newBuilder();
+    List<AttachmentPointer> pointers = createAttachmentPointers(message.getAttachments());
 
     if (!pointers.isEmpty()) {
       builder.addAllAttachments(pointers);
@@ -166,21 +194,44 @@ public class TextSecureMessageSender {
     }
 
     if (message.isEndSession()) {
-      builder.setFlags(PushMessageContent.Flags.END_SESSION_VALUE);
+      builder.setFlags(DataMessage.Flags.END_SESSION_VALUE);
     }
 
     return builder.build().toByteArray();
   }
 
-  private byte[] createSyncMessageContent(byte[] content, TextSecureAddress recipient, long timestamp) {
-    try {
-      PushMessageContent.Builder builder = PushMessageContent.parseFrom(content).toBuilder();
-      builder.setSync(PushMessageContent.SyncMessageContext.newBuilder()
-                                                           .setDestination(recipient.getNumber())
-                                                           .setTimestamp(timestamp)
-                                                           .build());
+  private byte[] createMultiDeviceContactsContent(TextSecureAttachmentStream contacts) throws IOException {
+    Content.Builder     container = Content.newBuilder();
+    SyncMessage.Builder builder   = SyncMessage.newBuilder();
+    builder.setContacts(SyncMessage.Contacts.newBuilder()
+                                            .setBlob(createAttachmentPointer(contacts)));
 
-      return builder.build().toByteArray();
+    return container.setSyncMessage(builder).build().toByteArray();
+  }
+
+  private byte[] createMultiDeviceGroupsContent(TextSecureAttachmentStream groups) throws IOException {
+    Content.Builder     container = Content.newBuilder();
+    SyncMessage.Builder builder   = SyncMessage.newBuilder();
+    builder.setGroups(SyncMessage.Groups.newBuilder()
+                                        .setBlob(createAttachmentPointer(groups)));
+
+    return container.setSyncMessage(builder).build().toByteArray();
+  }
+
+  private byte[] createMultiDeviceSentTranscriptContent(byte[] content, Optional<TextSecureAddress> recipient, long timestamp) {
+    try {
+      Content.Builder          container   = Content.newBuilder();
+      SyncMessage.Builder      syncMessage = SyncMessage.newBuilder();
+      SyncMessage.Sent.Builder sentMessage = SyncMessage.Sent.newBuilder();
+
+      sentMessage.setTimestamp(timestamp);
+      sentMessage.setMessage(DataMessage.parseFrom(content));
+
+      if (recipient.isPresent()) {
+        sentMessage.setDestination(recipient.get().getNumber());
+      }
+
+      return container.setSyncMessage(syncMessage.setSent(sentMessage)).build().toByteArray();
     } catch (InvalidProtocolBufferException e) {
       throw new AssertionError(e);
     }
@@ -209,16 +260,18 @@ public class TextSecureMessageSender {
     return builder.build();
   }
 
-  private void sendMessage(List<TextSecureAddress> recipients, long timestamp, byte[] content)
+  private SendMessageResponse sendMessage(List<TextSecureAddress> recipients, long timestamp, byte[] content, boolean legacy)
       throws IOException, EncapsulatedExceptions
   {
     List<UntrustedIdentityException> untrustedIdentities = new LinkedList<>();
     List<UnregisteredUserException>  unregisteredUsers   = new LinkedList<>();
     List<NetworkFailureException>    networkExceptions   = new LinkedList<>();
 
+    SendMessageResponse response = null;
+
     for (TextSecureAddress recipient : recipients) {
       try {
-        sendMessage(recipient, timestamp, content);
+        response = sendMessage(recipient, timestamp, content, legacy);
       } catch (UntrustedIdentityException e) {
         Log.w(TAG, e);
         untrustedIdentities.add(e);
@@ -234,14 +287,16 @@ public class TextSecureMessageSender {
     if (!untrustedIdentities.isEmpty() || !unregisteredUsers.isEmpty() || !networkExceptions.isEmpty()) {
       throw new EncapsulatedExceptions(untrustedIdentities, unregisteredUsers, networkExceptions);
     }
+
+    return response;
   }
 
-  private SendMessageResponse sendMessage(TextSecureAddress recipient, long timestamp, byte[] content)
+  private SendMessageResponse sendMessage(TextSecureAddress recipient, long timestamp, byte[] content, boolean legacy)
       throws UntrustedIdentityException, IOException
   {
     for (int i=0;i<3;i++) {
       try {
-        OutgoingPushMessageList messages = getEncryptedMessages(socket, recipient, timestamp, content);
+        OutgoingPushMessageList messages = getEncryptedMessages(socket, recipient, timestamp, content, legacy);
         return socket.sendMessage(messages);
       } catch (MismatchedDevicesException mde) {
         Log.w(TAG, mde);
@@ -295,27 +350,28 @@ public class TextSecureMessageSender {
   private OutgoingPushMessageList getEncryptedMessages(PushServiceSocket socket,
                                                        TextSecureAddress recipient,
                                                        long timestamp,
-                                                       byte[] plaintext)
+                                                       byte[] plaintext,
+                                                       boolean legacy)
       throws IOException, UntrustedIdentityException
   {
     List<OutgoingPushMessage> messages = new LinkedList<>();
 
-    if (!recipient.equals(syncAddress)) {
-      messages.add(getEncryptedMessage(socket, recipient, TextSecureAddress.DEFAULT_DEVICE_ID, plaintext));
+    if (!recipient.equals(localAddress)) {
+      messages.add(getEncryptedMessage(socket, recipient, TextSecureAddress.DEFAULT_DEVICE_ID, plaintext, legacy));
     }
 
     for (int deviceId : store.getSubDeviceSessions(recipient.getNumber())) {
-      messages.add(getEncryptedMessage(socket, recipient, deviceId, plaintext));
+      messages.add(getEncryptedMessage(socket, recipient, deviceId, plaintext, legacy));
     }
 
     return new OutgoingPushMessageList(recipient.getNumber(), timestamp, recipient.getRelay().orNull(), messages);
   }
 
-  private OutgoingPushMessage getEncryptedMessage(PushServiceSocket socket, TextSecureAddress recipient, int deviceId, byte[] plaintext)
+  private OutgoingPushMessage getEncryptedMessage(PushServiceSocket socket, TextSecureAddress recipient, int deviceId, byte[] plaintext, boolean legacy)
       throws IOException, UntrustedIdentityException
   {
     AxolotlAddress   axolotlAddress = new AxolotlAddress(recipient.getNumber(), deviceId);
-    TextSecureCipher cipher         = new TextSecureCipher(store);
+    TextSecureCipher cipher         = new TextSecureCipher(localAddress, store);
 
     if (!store.containsSession(axolotlAddress)) {
       try {
@@ -339,7 +395,7 @@ public class TextSecureMessageSender {
       }
     }
 
-    return cipher.encrypt(axolotlAddress, plaintext);
+    return cipher.encrypt(axolotlAddress, plaintext, legacy);
   }
 
   private void handleMismatchedDevices(PushServiceSocket socket, TextSecureAddress recipient,
