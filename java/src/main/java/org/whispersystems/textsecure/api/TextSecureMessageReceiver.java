@@ -18,6 +18,8 @@ package org.whispersystems.textsecure.api;
 
 import org.whispersystems.libaxolotl.InvalidMessageException;
 import org.whispersystems.textsecure.api.crypto.AttachmentCipherInputStream;
+import org.whispersystems.textsecure.api.messages.TextSecureAttachment;
+import org.whispersystems.textsecure.api.messages.TextSecureAttachment.ProgressListener;
 import org.whispersystems.textsecure.api.messages.TextSecureAttachmentPointer;
 import org.whispersystems.textsecure.api.messages.TextSecureDataMessage;
 import org.whispersystems.textsecure.api.messages.TextSecureEnvelope;
@@ -91,7 +93,26 @@ public class TextSecureMessageReceiver {
   public InputStream retrieveAttachment(TextSecureAttachmentPointer pointer, File destination)
       throws IOException, InvalidMessageException
   {
-    socket.retrieveAttachment(pointer.getRelay().orNull(), pointer.getId(), destination);
+    return retrieveAttachment(pointer, destination, null);
+  }
+
+
+  /**
+   * Retrieves a TextSecure attachment.
+   *
+   * @param pointer The {@link org.whispersystems.textsecure.api.messages.TextSecureAttachmentPointer}
+   *                received in a {@link TextSecureDataMessage}.
+   * @param destination The download destination for this attachment.
+   * @param listener An optional listener (may be null) to receive callbacks on download progress.
+   *
+   * @return An InputStream that streams the plaintext attachment contents.
+   * @throws IOException
+   * @throws InvalidMessageException
+   */
+  public InputStream retrieveAttachment(TextSecureAttachmentPointer pointer, File destination, ProgressListener listener)
+      throws IOException, InvalidMessageException
+  {
+    socket.retrieveAttachment(pointer.getRelay().orNull(), pointer.getId(), destination, listener);
     return new AttachmentCipherInputStream(destination, pointer.getKey());
   }
 
