@@ -24,20 +24,19 @@ public class AccountAttributes {
   private String  signalingKey;
 
   @JsonProperty
-  private boolean supportsSms;
-
-  @JsonProperty
   private boolean fetchesMessages;
 
+  @JsonProperty
+  private boolean voice;
 
   @JsonProperty
   private int     registrationId;
 
-  public AccountAttributes(String signalingKey, boolean supportsSms, boolean fetchesMessages, int registrationId) {
+  public AccountAttributes(String signalingKey, boolean fetchesMessages, int registrationId, boolean voice) {
     this.signalingKey    = signalingKey;
-    this.supportsSms     = supportsSms;
     this.fetchesMessages = fetchesMessages;
     this.registrationId  = registrationId;
+    this.voice          = voice;
   }
 
   public AccountAttributes() {}
@@ -46,13 +45,13 @@ public class AccountAttributes {
     return signalingKey;
   }
 
-  public boolean isSupportsSms() {
-    return supportsSms;
-  }
-
   public int getRegistrationId() {
     return registrationId;
   }
 
   public boolean isFetchesMessages() { return fetchesMessages; }
+
+  public boolean isVoice() {
+    return voice;
+  }
 }

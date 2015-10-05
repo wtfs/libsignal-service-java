@@ -88,9 +88,10 @@ public class TextSecureMessageSender {
   public TextSecureMessageSender(String url, TrustStore trustStore,
                                  String user, String password,
                                  AxolotlStore store,
+                                 String userAgent,
                                  Optional<EventListener> eventListener)
   {
-    this.socket        = new PushServiceSocket(url, trustStore, new StaticCredentialsProvider(user, password, null));
+    this.socket        = new PushServiceSocket(url, trustStore, new StaticCredentialsProvider(user, password, null), userAgent);
     this.store         = store;
     this.localAddress  = new TextSecureAddress(user);
     this.eventListener = eventListener;
@@ -340,11 +341,17 @@ public class TextSecureMessageSender {
 
     long attachmentId = socket.sendAttachment(attachmentData);
 
-    return AttachmentPointer.newBuilder()
-                            .setContentType(attachment.getContentType())
-                            .setId(attachmentId)
-                            .setKey(ByteString.copyFrom(attachmentKey))
-                            .build();
+    AttachmentPointer.Builder builder = AttachmentPointer.newBuilder()
+                                                         .setContentType(attachment.getContentType())
+                                                         .setId(attachmentId)
+                                                         .setKey(ByteString.copyFrom(attachmentKey))
+                                                         .setSize((int)attachment.getLength());
+
+    if (attachment.getPreview().isPresent()) {
+      builder.setThumbnail(ByteString.copyFrom(attachment.getPreview().get()));
+    }
+
+    return builder.build();
   }
 
 

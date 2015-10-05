@@ -57,6 +57,7 @@ public class TextSecureAccountManager {
 
   private final PushServiceSocket pushServiceSocket;
   private final String            user;
+  private final String            userAgent;
 
   /**
    * Construct a TextSecureAccountManager.
@@ -65,12 +66,15 @@ public class TextSecureAccountManager {
    * @param trustStore The {@link org.whispersystems.textsecure.api.push.TrustStore} for the TextSecure server's TLS certificate.
    * @param user A TextSecure phone number.
    * @param password A TextSecure password.
+   * @param userAgent A string which identifies the client software.
    */
   public TextSecureAccountManager(String url, TrustStore trustStore,
-                                  String user, String password)
+                                  String user, String password,
+                                  String userAgent)
   {
-    this.pushServiceSocket = new PushServiceSocket(url, trustStore, new StaticCredentialsProvider(user, password, null));
+    this.pushServiceSocket = new PushServiceSocket(url, trustStore, new StaticCredentialsProvider(user, password, null), userAgent);
     this.user              = user;
+    this.userAgent         = userAgent;
   }
 
   /**
@@ -108,27 +112,75 @@ public class TextSecureAccountManager {
   }
 
   /**
-   * Verify a TextSecure account.
+   * Verify a TextSecure account with a received SMS or voice verification code.
    *
    * @param verificationCode The verification code received via SMS or Voice
    *                         (see {@link #requestSmsVerificationCode} and
    *                         {@link #requestVoiceVerificationCode}).
    * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key,
    *                     concatenated.
-   * @param supportsSms Indicate whether this client is capable of supporting encrypted SMS.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
    * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
    *                              This value should remain consistent across registrations for the
    *                              same install, but probabilistically differ across registrations
    *                              for separate installs.
+   * @param voice A boolean that indicates whether the client supports secure voice (RedPhone) calls.
    *
    * @throws IOException
    */
-  public void verifyAccount(String verificationCode, String signalingKey,
-                            boolean supportsSms, boolean fetchesMessages, int axolotlRegistrationId)
+  public void verifyAccountWithCode(String verificationCode, String signalingKey, boolean fetchesMessages,
+                            int axolotlRegistrationId, boolean voice)
       throws IOException
   {
-    this.pushServiceSocket.verifyAccount(verificationCode, signalingKey,
-                                         supportsSms, fetchesMessages, axolotlRegistrationId);
+    this.pushServiceSocket.verifyAccountCode(verificationCode, signalingKey,fetchesMessages,
+                                             axolotlRegistrationId, voice);
+  }
+
+  /**
+   * Verify a TextSecure account with a signed token from a trusted source.
+   *
+   * @param verificationToken The signed token provided by a trusted server.
+
+   * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key,
+   *                     concatenated.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
+   * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
+   *                              This value should remain consistent across registrations for the
+   *                              same install, but probabilistically differ across registrations
+   *                              for separate installs.
+   * @param voice A boolean that indicates whether the client supports secure voice (RedPhone) calls.
+   *
+   * @throws IOException
+   */
+  public void verifyAccountWithToken(String verificationToken, String signalingKey, boolean fetchesMessages,
+                                     int axolotlRegistrationId, boolean voice)
+      throws IOException
+  {
+    this.pushServiceSocket.verifyAccountToken(verificationToken, signalingKey,
+            fetchesMessages, axolotlRegistrationId, voice);
+  }
+
+  /**
+   * Refresh account attributes with server.
+   *
+   * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key, concatenated.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
+   * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
+   *                              This value should remain consistent across registrations for the same
+   *                              install, but probabilistically differ across registrations for
+   *                              separate installs.
+   * @param voice A boolean that indicates whether the client supports secure voice (RedPhone)
+   *
+   * @throws IOException
+   */
+  public void setAccountAttributes(String signalingKey, boolean fetchesMessages,
+                                   int axolotlRegistrationId, boolean voice)
+      throws IOException
+  {
+    this.pushServiceSocket.setAccountAttributes(signalingKey, fetchesMessages, axolotlRegistrationId, voice);
   }
 
   /**
@@ -211,6 +263,10 @@ public class TextSecureAccountManager {
     }
 
     return activeTokens;
+  }
+
+  public String getAccountVerificationToken() throws IOException {
+    return this.pushServiceSocket.getAccountVerificationToken();
   }
 
   public String getNewDeviceVerificationCode() throws IOException {
