@@ -124,24 +124,29 @@ public class PushServiceSocket {
     makeRequest(String.format(path, credentialsProvider.getUser()), "GET", null);
   }
 
-  public void verifyAccountCode(String verificationCode, String signalingKey, int registrationId, boolean voice)
+  public void verifyAccountCode(String verificationCode, String signalingKey,
+                                boolean fetchesMessages, int registrationId, boolean voice)
       throws IOException
   {
-    AccountAttributes signalingKeyEntity = new AccountAttributes(signalingKey, registrationId, voice);
+    AccountAttributes signalingKeyEntity = new AccountAttributes(signalingKey,
+            fetchesMessages, registrationId, voice);
     makeRequest(String.format(VERIFY_ACCOUNT_CODE_PATH, verificationCode),
                 "PUT", JsonUtil.toJson(signalingKeyEntity));
   }
 
-  public void verifyAccountToken(String verificationToken, String signalingKey, int registrationId, boolean voice)
+  public void verifyAccountToken(String verificationToken, String signalingKey, boolean fetchesMessages,
+                                 int registrationId, boolean voice)
       throws IOException
   {
-    AccountAttributes signalingKeyEntity = new AccountAttributes(signalingKey, registrationId, voice);
+    AccountAttributes signalingKeyEntity = new AccountAttributes(signalingKey, fetchesMessages, registrationId, voice);
     makeRequest(String.format(VERIFY_ACCOUNT_TOKEN_PATH, verificationToken),
                 "PUT", JsonUtil.toJson(signalingKeyEntity));
   }
 
-  public void setAccountAttributes(String signalingKey, int registrationId, boolean voice) throws IOException {
-    AccountAttributes accountAttributes = new AccountAttributes(signalingKey, registrationId, voice);
+  public void setAccountAttributes(String signalingKey, boolean fetchesMessages,
+                                   int registrationId, boolean voice)
+          throws IOException {
+    AccountAttributes accountAttributes = new AccountAttributes(signalingKey, fetchesMessages, registrationId, voice);
     makeRequest(SET_ACCOUNT_ATTRIBUTES, "PUT", JsonUtil.toJson(accountAttributes));
   }
 

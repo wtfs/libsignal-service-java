@@ -119,6 +119,8 @@ public class TextSecureAccountManager {
    *                         {@link #requestVoiceVerificationCode}).
    * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key,
    *                     concatenated.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
    * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
    *                              This value should remain consistent across registrations for the
    *                              same install, but probabilistically differ across registrations
@@ -127,10 +129,11 @@ public class TextSecureAccountManager {
    *
    * @throws IOException
    */
-  public void verifyAccountWithCode(String verificationCode, String signalingKey, int axolotlRegistrationId, boolean voice)
+  public void verifyAccountWithCode(String verificationCode, String signalingKey, boolean fetchesMessages,
+                            int axolotlRegistrationId, boolean voice)
       throws IOException
   {
-    this.pushServiceSocket.verifyAccountCode(verificationCode, signalingKey,
+    this.pushServiceSocket.verifyAccountCode(verificationCode, signalingKey,fetchesMessages,
                                              axolotlRegistrationId, voice);
   }
 
@@ -141,6 +144,8 @@ public class TextSecureAccountManager {
 
    * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key,
    *                     concatenated.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
    * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
    *                              This value should remain consistent across registrations for the
    *                              same install, but probabilistically differ across registrations
@@ -149,16 +154,20 @@ public class TextSecureAccountManager {
    *
    * @throws IOException
    */
-  public void verifyAccountWithToken(String verificationToken, String signalingKey, int axolotlRegistrationId, boolean voice)
+  public void verifyAccountWithToken(String verificationToken, String signalingKey, boolean fetchesMessages,
+                                     int axolotlRegistrationId, boolean voice)
       throws IOException
   {
-    this.pushServiceSocket.verifyAccountToken(verificationToken, signalingKey, axolotlRegistrationId, voice);
+    this.pushServiceSocket.verifyAccountToken(verificationToken, signalingKey,
+            fetchesMessages, axolotlRegistrationId, voice);
   }
 
   /**
    * Refresh account attributes with server.
    *
    * @param signalingKey 52 random bytes.  A 32 byte AES key and a 20 byte Hmac256 key, concatenated.
+   * @param fetchesMessages A boolean that indicates whether the client supports fetching messages
+   *                     (websockets)
    * @param axolotlRegistrationId A random 14-bit number that identifies this TextSecure install.
    *                              This value should remain consistent across registrations for the same
    *                              install, but probabilistically differ across registrations for
@@ -167,10 +176,11 @@ public class TextSecureAccountManager {
    *
    * @throws IOException
    */
-  public void setAccountAttributes(String signalingKey, int axolotlRegistrationId, boolean voice)
+  public void setAccountAttributes(String signalingKey, boolean fetchesMessages,
+                                   int axolotlRegistrationId, boolean voice)
       throws IOException
   {
-    this.pushServiceSocket.setAccountAttributes(signalingKey, axolotlRegistrationId, voice);
+    this.pushServiceSocket.setAccountAttributes(signalingKey, fetchesMessages, axolotlRegistrationId, voice);
   }
 
   /**
