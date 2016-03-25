@@ -133,7 +133,7 @@ public class SignalServiceAccountManager {
                             int signalProtocolRegistrationId, boolean voice)
       throws IOException
   {
-    this.pushServiceSocket.verifyAccountCode(verificationCode, signalingKey,fetchesMessages,
+    this.pushServiceSocket.verifyAccountCode(verificationCode, signalingKey, fetchesMessages,
                                              signalProtocolRegistrationId, voice);
   }
 
